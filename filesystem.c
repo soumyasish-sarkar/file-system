@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 static struct fuse_operations myfs_operations = {
-    // We'll add our functions here one by one
+    //Function will be added here
 };
 
 int main(int argc, char *argv[]) {
