@@ -13,5 +13,5 @@ Basically, FUSE allows us to call our own functions instead of using the default
 For Ubuntu
 ```
 $ sudo apt update
-$ sudo apt-get install libfuse3-dev
+$ sudo apt-get install libfuse-dev
 ```
