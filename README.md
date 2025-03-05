@@ -15,3 +15,4 @@ For Ubuntu
 $ sudo apt update
 $ sudo apt-get install libfuse-dev
 ```
+# Error May occur after installing FUSE Library
