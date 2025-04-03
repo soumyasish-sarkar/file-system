@@ -8,12 +8,15 @@
 // Step 1: File System Registration Function
 static int __init sfs_init(void) {
     printk(KERN_INFO "SFS: Initializing Simple File System\n");
+    printk(KERN_INFO " Inside code , hello \n");
+
     return 0;  // Success
 }
 
 // Step 2: File System Unregistration Function
 static void __exit sfs_exit(void) {
     printk(KERN_INFO "SFS: Unloading Simple File System\n");
+    
 }
 
 // Step 3: Register the Module Entry and Exit Points
