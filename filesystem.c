@@ -3,25 +3,30 @@
 #include <linux/init.h>     // For module initialization
 #include <linux/kernel.h>   // For printk()
 
-#define FILESYSTEM_NAME "sfs"  // Simple File System
+#define FILESYSTEM_NAME "file_system"  // file_system
 
-// Step 1: File System Registration Function
-static int __init sfs_init(void) {
-    printk(KERN_INFO "SFS: Initializing Simple File System\n");
-    printk(KERN_INFO " Inside code , hello \n");
 
-    return 0;  // Success
+//File System Registration Function
+static int __init file_system_init(void){   //__init a special Macro, used only during initialization
+    printk(KERN_INFO "file_system: Initialization of File System\n");
+    printk(KERN_INFO "Inside file_syetem_init function i.e, Registering Function\n");
+
+    return 0; //success
 }
 
-// Step 2: File System Unregistration Function
-static void __exit sfs_exit(void) {
-    printk(KERN_INFO "SFS: Unloading Simple File System\n");
-    
+
+//File System Unregistration Function
+static void __exit file_system_exit(void){
+    printk(KERN_INFO "file_system : Unloading file system\n");
+    printk(KERN_INFO "Inside file_system_exit function i.e, Unregistering Function\n");
 }
+
 
 // Step 3: Register the Module Entry and Exit Points
-module_init(sfs_init);
-module_exit(sfs_exit);
+module_init(file_system_init);  /*macro tells the kernel When this module is loaded (using insmod), run the function sfs_init().
+So this is the entry point of the module.*/
+
+module_exit(file_system_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Soumyasish Sarkar");
