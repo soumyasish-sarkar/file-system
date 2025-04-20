@@ -5,11 +5,15 @@
 #include <linux/pagemap.h>  // for simple_dir_inode_operations
 #include <linux/string.h>
 #include <linux/slab.h>   //provides dynamic memory allocation functions in the Linux kernel space like malloc(), free() in user space.
+#include <linux/uaccess.h>  // for copy_to_user
 
 
 #define FILESYSTEM_NAME "file_system"  // file_system
 #define FILESYSTEM_MAGIC 0x1CEB00DA   //unique magic number for file system
 #define FILESYSTEM_DEFAULT_MODE 0755   //default file permision for files or dirctories created
+#define FILE_CONTENT "Hello from kernel file system!\n"
+#define FILE_NAME "myfile"
+
 
 // mount function of the custom file system
 static struct dentry *file_system_mount(struct file_system_type *fs_type,int flags, const char *dev_name, void *data);
@@ -51,32 +55,78 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
     return inode;
 }
 
+// Custom open function
+static int file_open(struct inode *inode, struct file *filp) {
+    printk(KERN_INFO "file_system: file_open called\n");
+    return 0;
+}
+
+// Custom read function
+static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset) {
+    const char *data = FILE_CONTENT;
+    size_t datalen = strlen(data);
+
+    printk(KERN_INFO "file_system: file_read called\n");
+
+    if (*offset >= datalen)
+        return 0;
+
+    if (len > datalen - *offset)
+        len = datalen - *offset;
+
+    if (copy_to_user(buf, data + *offset, len) != 0)
+        return -EFAULT;
+
+    *offset += len;
+    return len;
+}
+
+//Define file operations for our file
+static const struct file_operations file_ops = {
+    .owner = THIS_MODULE,
+    .open = file_open,
+    .read = file_read,
+};
+
+
 // Superblock setup function for mounting
 
 static int file_system_fill_super(struct super_block *sb, void *data, int silent)
 {
-    struct inode *root_inode;
+    struct inode *root_inode, *file_inode;
+    struct dentry *root_dentry, *file_dentry;
+
     sb->s_magic = FILESYSTEM_MAGIC;
     sb->s_op = &file_system_super_ops;
 
+    // Root inode
     root_inode = file_system_make_inode(sb, S_IFDIR | FILESYSTEM_DEFAULT_MODE);
-
-    if (!root_inode) {
-        printk(KERN_ERR "file_system: failed to allocate root inode\n");
+    if (!root_inode)
         return -ENOMEM;
-    }
 
-    struct dentry *root = d_make_root(root_inode);
-    if (!root) {
-        printk(KERN_ERR "file_system: failed to create root dentry\n");
+    root_dentry = d_make_root(root_inode);
+    if (!root_dentry)
         return -ENOMEM;
-    }
 
-    sb->s_root = root;
+    sb->s_root = root_dentry;
 
-    printk(KERN_INFO "file_system: superblock initialized\n");
+    // Create a file inside root: myfile
+    file_inode = file_system_make_inode(sb, S_IFREG | 0644);
+    if (!file_inode)
+        return -ENOMEM;
+
+    file_inode->i_fop = &file_ops;
+
+    file_dentry = d_alloc_name(root_dentry, FILE_NAME);
+    if (!file_dentry) return -ENOMEM;
+
+    d_add(file_dentry, file_inode);
+
+    printk(KERN_INFO "file_system: superblock initialized with 'myfile'\n");
     return 0;
 }
+
+
 
 // Mount function of the file system
 static struct dentry *file_system_mount(struct file_system_type *fs_type,int flags, const char *dev_name, void *data)
