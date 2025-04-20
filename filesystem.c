@@ -51,7 +51,7 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
     return inode;
 }
 
-//
+// Superblock setup function for mounting
 
 static int file_system_fill_super(struct super_block *sb, void *data, int silent)
 {
@@ -78,7 +78,7 @@ static int file_system_fill_super(struct super_block *sb, void *data, int silent
     return 0;
 }
 
-//
+// Mount function of the file system
 static struct dentry *file_system_mount(struct file_system_type *fs_type,int flags, const char *dev_name, void *data)
 {
     printk(KERN_INFO "file_system: mounting...\n");
