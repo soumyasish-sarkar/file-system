@@ -29,6 +29,26 @@ static void file_system_kill_sb(struct super_block *sb)
     kill_litter_super(sb);  // Cleans up dentry tree and frees superblock
 }
 
+//mkdir
+static int file_mkdir(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, umode_t mode)
+{
+    struct inode *inode = file_system_make_inode(dir->i_sb, S_IFDIR | mode);
+
+    if (!inode)
+        return -ENOMEM;
+
+    d_add(dentry, inode);
+
+    // Increase link count: directory + '.' reference
+    inode_inc_link_count(dir);  // ".." in the new dir points to parent
+    inode_inc_link_count(inode); // "." in new dir points to itself
+
+    printk(KERN_INFO "file_system: Directory '%s' created\n", dentry->d_name.name);
+    return 0;
+}
+
+
+
 // Define the File System Type
 static struct file_system_type file_system_type = {
     .owner = THIS_MODULE,       // Module safety (reference count)
@@ -48,6 +68,23 @@ static const struct inode_operations file_system_inode_ops = {
     .link = file_link,  // Link function for hard link creation
 };
 
+// Define file operations for our file
+static const struct file_operations file_ops = {
+    .owner = THIS_MODULE,
+    .open = file_open,
+    .read = file_read,
+    //.link = file_link, // Uncomment if needed in the future
+};
+
+static const struct inode_operations file_system_dir_inode_ops = {
+    .lookup = simple_lookup,
+    .link   = file_link,  // ✅ use your custom hard link
+    .mkdir  = file_mkdir,
+    .rmdir  = simple_rmdir,
+    // ... add others as needed
+};
+
+
 // Inode creation function for the file system
 static struct inode *file_system_make_inode(struct super_block *sb, int mode)
 {
@@ -58,19 +95,39 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
 
     inode->i_ino = get_next_ino(); // Unique inode number
     inode->i_sb = sb;
-    inode->i_op = &file_system_inode_ops; // Use custom inode operations
-    inode->i_fop = &simple_dir_operations;  // Default file operations
     inode->i_mode = mode;
+
+    // if (S_ISDIR(mode)) {
+    //     inode->i_op = &simple_dir_inode_operations;
+    //     inode->i_fop = &simple_dir_operations;
+    //     inode_inc_link_count(inode);  // 2 links for a directory (self + .)
+    // }
+    if (S_ISDIR(mode)) {
+        inode->i_op = &file_system_dir_inode_ops;  // 👈 hybrid ops
+        inode->i_fop = &simple_dir_operations;
+        inode_inc_link_count(inode);  // 2 links for directory
+    }
+    
+    
+    
+    else if (S_ISREG(mode)) {
+        inode->i_fop = &file_ops;
+        inode_inc_link_count(inode);  // 1 link for file
+    }
+
+    //inode->i_op = &file_system_inode_ops; // Use custom inode operations
+    //inode->i_fop = &simple_dir_operations;  // Default file operations
     //inode->i_nlink = 1;  // Initialize the link count to 1 for the new file
 
 
     // Don't manually set i_nlink, it will be handled by the kernel.
-    inode_inc_link_count(inode);  // Increment the link count for the new inode
+    //inode_inc_link_count(inode);  // Increment the link count for the new inode
 
     
     printk(KERN_INFO "file_system: inode created with mode %o\n", mode);
     return inode;
 }
+
 
 
 
@@ -102,29 +159,51 @@ static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t
     return len;
 }
 
-// Link creation function (hard link)
+
+
+// static int file_link(struct dentry *old_dentry, struct inode *dir_inode, struct dentry *new_dentry)
+// {
+//     struct inode *old_inode = d_inode(old_dentry);
+
+//     printk(KERN_INFO "file_system: Attempting to create hard link\n");
+
+//     if (!old_inode) {
+//         printk(KERN_ERR "file_system: Old inode is NULL\n");
+//         return -ENOENT;  // File not found
+//     }
+
+//     inode_inc_link_count(old_inode);
+
+//     new_dentry->d_inode = old_inode;
+//     d_add(new_dentry, old_inode);
+
+//     printk(KERN_INFO "file_system: Created hard link '%s' to '%s'\n", new_dentry->d_name.name, old_dentry->d_name.name);
+//     return 0;
+// }
 static int file_link(struct dentry *old_dentry, struct inode *dir_inode, struct dentry *new_dentry)
 {
     struct inode *old_inode = d_inode(old_dentry);
+    
+    printk(KERN_INFO "file_system: Attempting to create hard link\n");
 
-    // Increment the link count for the inode
+    if (!old_inode) {
+        printk(KERN_ERR "file_system: Old inode is NULL\n");
+        return -ENOENT;  // File not found
+    }
+
+    // Increment link count for the existing inode
     inode_inc_link_count(old_inode);
 
-    // Create new dentry that points to the same inode
+    // Set up the new dentry and associate it with the old inode
     new_dentry->d_inode = old_inode;
-    d_add(new_dentry, old_inode);
+    d_add(new_dentry, old_inode);  // Add new dentry for the hard link
 
-    printk(KERN_INFO "file_system: created hard link '%s' to '%s'\n", new_dentry->d_name.name, old_dentry->d_name.name);
+    
+    printk(KERN_INFO "file_system: Created hard link '%s' to '%s'\n", new_dentry->d_name.name, old_dentry->d_name.name);
     return 0;
 }
 
-// Define file operations for our file
-static const struct file_operations file_ops = {
-    .owner = THIS_MODULE,
-    .open = file_open,
-    .read = file_read,
-    //.link = file_link, // Uncomment if needed in the future
-};
+
 
 // Superblock setup function for mounting
 static int file_system_fill_super(struct super_block *sb, void *data, int silent)
@@ -208,3 +287,4 @@ module_exit(file_system_exit);  // Exit point when module is removed (using rmmo
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Soumyasish Sarkar");
 MODULE_DESCRIPTION("A Simple Kernel-Level File System");
+
