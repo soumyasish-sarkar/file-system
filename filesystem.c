@@ -1,144 +1,123 @@
-#include <linux/module.h>   // Required for kernel modules
-#include <linux/fs.h>       // File system support
-#include <linux/init.h>     // For module initialization
-#include <linux/kernel.h>   // For printk()
-#include <linux/pagemap.h>  // for simple_dir_inode_operations
-#include <linux/string.h>
-#include <linux/slab.h>     // Provides dynamic memory allocation functions in the Linux kernel space
-#include <linux/uaccess.h>  // For copy_to_user
+// SPDX-License-Identifier: GPL
+// Author: Soumyasish Sarkar
+// Description: A simple in-kernel custom file system with hard link and file creation support
 
-#define FILESYSTEM_NAME "file_system"  // File system name
-#define FILESYSTEM_MAGIC 0x1CEB00DA   // Unique magic number for file system
-#define FILESYSTEM_DEFAULT_MODE 0755   // Default file permission for files or directories created
+// ===============================
+//           Headers
+// ===============================
+#include <linux/module.h>       // Core header for loading LKMs into the kernel
+#include <linux/fs.h>           // File system structures
+#include <linux/init.h>         // Macros used to mark up functions e.g., __init __exit
+#include <linux/kernel.h>       // Contains types, macros, functions for the kernel
+#include <linux/pagemap.h>      // For simple_dir_inode_operations, etc.
+#include <linux/string.h>       // String helper functions
+#include <linux/slab.h>         // Kernel memory allocation
+#include <linux/uaccess.h>      // For copy_to_user
+
+// ===============================
+//        Macro Definitions
+// ===============================
+#define FILESYSTEM_NAME "file_system"
+#define FILESYSTEM_MAGIC 0x1CEB00DA
+#define FILESYSTEM_DEFAULT_MODE 0755
 #define FILE_CONTENT "Hello from kernel file system!\n"
 #define FILE_NAME "myfile"
 
-// Forward declarations
+// ===============================
+//     Function Declarations
+// ===============================
 static int file_open(struct inode *inode, struct file *filp);
 static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset);
-static int file_link(struct dentry *old_dentry, struct inode *dir_inode, struct dentry *new_dentry);
+static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 static struct inode *file_system_make_inode(struct super_block *sb, int mode);
-
-// Mount function for the custom file system
 static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data);
 
-// Kill function for unmounting the file system
-static void file_system_kill_sb(struct super_block *sb)
-{
-    printk(KERN_INFO "file_system: unmounting...\n");
-    kill_litter_super(sb);  // Cleans up dentry tree and frees superblock
-}
+// ===============================
+//        File Operations
+// ===============================
+static const struct file_operations file_ops = {
+    .owner = THIS_MODULE,
+    .open = file_open,
+    .read = file_read,
+    .write = file_write,
+};
 
-//mkdir
+// ===============================
+//       Inode Operations
+// ===============================
+static const struct inode_operations file_system_inode_ops = {
+    .link = simple_link,
+};
+
+// ===============================
+// Directory Inode Operations
+// ===============================
 static int file_mkdir(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, umode_t mode)
 {
     struct inode *inode = file_system_make_inode(dir->i_sb, S_IFDIR | mode);
-
     if (!inode)
         return -ENOMEM;
 
     d_add(dentry, inode);
 
-    // Increase link count: directory + '.' reference
-    inode_inc_link_count(dir);  // ".." in the new dir points to parent
-    inode_inc_link_count(inode); // "." in new dir points to itself
+    inode_inc_link_count(dir);      // ".." in new dir points to parent
+    inode_inc_link_count(inode);    // "." in new dir points to itself
 
     printk(KERN_INFO "file_system: Directory '%s' created\n", dentry->d_name.name);
     return 0;
 }
 
-
-
-// Define the File System Type
-static struct file_system_type file_system_type = {
-    .owner = THIS_MODULE,       // Module safety (reference count)
-    .name = FILESYSTEM_NAME,
-    .mount = file_system_mount,      // Sets up superblock and VFS structures, entry point for setting up the in-memory file system structure
-    .kill_sb = file_system_kill_sb,  // Cleans up on unmount
-};
-
-// Superblock operations
-static const struct super_operations file_system_super_ops = {
-    .statfs = simple_statfs,      // Return basic info about the file system
-    .drop_inode = generic_delete_inode,  // Called when inode is no longer needed and can be deleted safely
-};
-
-// Custom inode operations
-static const struct inode_operations file_system_inode_ops = {
-    .link = file_link,  // Link function for hard link creation
-};
-
-// Define file operations for our file
-static const struct file_operations file_ops = {
-    .owner = THIS_MODULE,
-    .open = file_open,
-    .read = file_read,
-    //.link = file_link, // Uncomment if needed in the future
-};
-
 static const struct inode_operations file_system_dir_inode_ops = {
     .lookup = simple_lookup,
-    .link   = file_link,  // ✅ use your custom hard link
+    .link   = simple_link,
     .mkdir  = file_mkdir,
     .rmdir  = simple_rmdir,
-    // ... add others as needed
 };
 
+// ===============================
+//      Superblock Operations
+// ===============================
+static const struct super_operations file_system_super_ops = {
+    .statfs = simple_statfs,
+    .drop_inode = generic_delete_inode,
+};
 
-// Inode creation function for the file system
+// ===============================
+//         Core Functions
+// ===============================
+
+// Create a new inode
 static struct inode *file_system_make_inode(struct super_block *sb, int mode)
 {
     struct inode *inode = new_inode(sb);
-
     if (!inode)
         return NULL;
 
-    inode->i_ino = get_next_ino(); // Unique inode number
+    inode->i_ino = get_next_ino();
     inode->i_sb = sb;
     inode->i_mode = mode;
 
-    // if (S_ISDIR(mode)) {
-    //     inode->i_op = &simple_dir_inode_operations;
-    //     inode->i_fop = &simple_dir_operations;
-    //     inode_inc_link_count(inode);  // 2 links for a directory (self + .)
-    // }
     if (S_ISDIR(mode)) {
-        inode->i_op = &file_system_dir_inode_ops;  // 👈 hybrid ops
+        inode->i_op = &file_system_dir_inode_ops;
         inode->i_fop = &simple_dir_operations;
-        inode_inc_link_count(inode);  // 2 links for directory
-    }
-    
-    
-    
-    else if (S_ISREG(mode)) {
+        inode_inc_link_count(inode);
+    } else if (S_ISREG(mode)) {
         inode->i_fop = &file_ops;
-        inode_inc_link_count(inode);  // 1 link for file
+        inode_inc_link_count(inode);
     }
 
-    //inode->i_op = &file_system_inode_ops; // Use custom inode operations
-    //inode->i_fop = &simple_dir_operations;  // Default file operations
-    //inode->i_nlink = 1;  // Initialize the link count to 1 for the new file
-
-
-    // Don't manually set i_nlink, it will be handled by the kernel.
-    //inode_inc_link_count(inode);  // Increment the link count for the new inode
-
-    
     printk(KERN_INFO "file_system: inode created with mode %o\n", mode);
     return inode;
 }
 
-
-
-
-// Custom open function
+// Open system call
 static int file_open(struct inode *inode, struct file *filp)
 {
     printk(KERN_INFO "file_system: file_open called\n");
     return 0;
 }
 
-// Custom read function
+// Read system call
 static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset)
 {
     const char *data = FILE_CONTENT;
@@ -159,53 +138,16 @@ static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t
     return len;
 }
 
-
-
-// static int file_link(struct dentry *old_dentry, struct inode *dir_inode, struct dentry *new_dentry)
-// {
-//     struct inode *old_inode = d_inode(old_dentry);
-
-//     printk(KERN_INFO "file_system: Attempting to create hard link\n");
-
-//     if (!old_inode) {
-//         printk(KERN_ERR "file_system: Old inode is NULL\n");
-//         return -ENOENT;  // File not found
-//     }
-
-//     inode_inc_link_count(old_inode);
-
-//     new_dentry->d_inode = old_inode;
-//     d_add(new_dentry, old_inode);
-
-//     printk(KERN_INFO "file_system: Created hard link '%s' to '%s'\n", new_dentry->d_name.name, old_dentry->d_name.name);
-//     return 0;
-// }
-static int file_link(struct dentry *old_dentry, struct inode *dir_inode, struct dentry *new_dentry)
+// Write system call
+static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset)
 {
-    struct inode *old_inode = d_inode(old_dentry);
-    
-    printk(KERN_INFO "file_system: Attempting to create hard link\n");
-
-    if (!old_inode) {
-        printk(KERN_ERR "file_system: Old inode is NULL\n");
-        return -ENOENT;  // File not found
-    }
-
-    // Increment link count for the existing inode
-    inode_inc_link_count(old_inode);
-
-    // Set up the new dentry and associate it with the old inode
-    new_dentry->d_inode = old_inode;
-    d_add(new_dentry, old_inode);  // Add new dentry for the hard link
-
-    
-    printk(KERN_INFO "file_system: Created hard link '%s' to '%s'\n", new_dentry->d_name.name, old_dentry->d_name.name);
-    return 0;
+    printk(KERN_INFO "file_system: file_write called (but write ignored)\n");
+    return len;  // Accepts data but does not store it
 }
 
-
-
-// Superblock setup function for mounting
+// ===============================
+//        Mount Operations
+// ===============================
 static int file_system_fill_super(struct super_block *sb, void *data, int silent)
 {
     struct inode *root_inode, *file_inode;
@@ -214,18 +156,20 @@ static int file_system_fill_super(struct super_block *sb, void *data, int silent
     sb->s_magic = FILESYSTEM_MAGIC;
     sb->s_op = &file_system_super_ops;
 
-    // Root inode
+    // Create root inode
     root_inode = file_system_make_inode(sb, S_IFDIR | FILESYSTEM_DEFAULT_MODE);
     if (!root_inode)
         return -ENOMEM;
 
     root_dentry = d_make_root(root_inode);
-    if (!root_dentry)
+    if (!root_dentry) {
+        iput(root_inode);
         return -ENOMEM;
+    }
 
     sb->s_root = root_dentry;
 
-    // Create a file inside root: myfile
+    // Create default file
     file_inode = file_system_make_inode(sb, S_IFREG | 0644);
     if (!file_inode)
         return -ENOMEM;
@@ -238,53 +182,65 @@ static int file_system_fill_super(struct super_block *sb, void *data, int silent
 
     d_add(file_dentry, file_inode);
 
-    printk(KERN_INFO "file_system: superblock initialized with 'myfile'\n");
+    printk(KERN_INFO "file_system: superblock initialized with '%s'\n", FILE_NAME);
     return 0;
 }
 
-// Mount function of the file system
+// Mount handler
 static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
 {
     printk(KERN_INFO "file_system: mounting...\n");
     return mount_nodev(fs_type, flags, data, file_system_fill_super);
 }
 
-// File system registration function
+// Unmount handler
+static void file_system_kill_sb(struct super_block *sb)
+{
+    printk(KERN_INFO "file_system: unmounting...\n");
+    kill_litter_super(sb);
+}
+
+// ===============================
+//     File System Definition
+// ===============================
+static struct file_system_type file_system_type = {
+    .owner = THIS_MODULE,
+    .name = FILESYSTEM_NAME,
+    .mount = file_system_mount,
+    .kill_sb = file_system_kill_sb,
+};
+
+// ===============================
+//    Module Init / Exit Hooks
+// ===============================
 static int __init file_system_init(void)
 {
     int ret;
-    printk(KERN_INFO "file_system: Registering file_system\n");
 
-    // Register the file system in the kernel
+    printk(KERN_INFO "file_system: Registering file system\n");
     ret = register_filesystem(&file_system_type);
-    if (ret != 0) {
-        printk(KERN_INFO "file_system: Failed to register file_system\n");
-        return ret;
-    }
-    printk(KERN_INFO "file_system: file_system successfully registered\n");
+    if (ret != 0)
+        printk(KERN_ERR "file_system: Registration failed\n");
 
-    return 0; // Success
+    return ret;
 }
 
-// File system unregistration function
 static void __exit file_system_exit(void)
 {
     int ret;
-    printk(KERN_INFO "file_system: Unregistering file_system\n");
 
-    // Unregister the file system
+    printk(KERN_INFO "file_system: Unregistering file system\n");
     ret = unregister_filesystem(&file_system_type);
-    if (ret != 0) {
-        printk(KERN_INFO "file_system: Failed to unregister file_system\n");
-    }
-    printk(KERN_INFO "file_system: file_system successfully unregistered\n");
+    if (ret != 0)
+        printk(KERN_ERR "file_system: Unregistration failed\n");
 }
 
-// Register the module entry and exit points
-module_init(file_system_init);  // Entry point when module is loaded (using insmod)
-module_exit(file_system_exit);  // Exit point when module is removed (using rmmod)
+module_init(file_system_init);
+module_exit(file_system_exit);
 
+// ===============================
+//         Module Info
+// ===============================
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Soumyasish Sarkar");
 MODULE_DESCRIPTION("A Simple Kernel-Level File System");
-
