@@ -25,8 +25,12 @@
 #define FILESYSTEM_NAME "file_system"
 #define FILESYSTEM_MAGIC 0x1CEB00DA
 #define FILESYSTEM_DEFAULT_MODE 0755
-#define FILE_CONTENT "Hello from kernel file system!\n"
+#define FILE_CONTENT "Content of myfile\n"
 #define FILE_NAME "myfile"
+#define MAX_FILE_SIZE 8192 //for file_write()
+static char file_data[MAX_FILE_SIZE];
+static size_t file_size = 0;
+
 
 // ===============================
 //     Function Declarations
@@ -152,6 +156,10 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
     inode->i_sb = sb;
     inode->i_mode = mode;
 
+    inode->i_uid = current_fsuid(); 
+    inode->i_gid = current_fsgid(); 
+
+
     if (S_ISDIR(mode)) {
         inode->i_op = &file_system_dir_inode_ops;
         inode->i_fop = &simple_dir_operations;
@@ -168,40 +176,107 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
     return inode;
 }
 
+//permission check
+static int check_permissions(struct inode *inode, int mask) {
+    kuid_t uid = current_fsuid();
+    kgid_t gid = current_fsgid();
 
-// Open system call
-static int file_open(struct inode *inode, struct file *filp)
-{
-    printk(KERN_INFO "file_system: file_open called\n");
+    umode_t mode = inode->i_mode;
+
+    // Owner
+    if (uid_eq(uid, inode->i_uid)) {
+        if ((mask & MAY_READ) && !(mode & S_IRUSR)) return -EACCES;
+        if ((mask & MAY_WRITE) && !(mode & S_IWUSR)) return -EACCES;
+        if ((mask & MAY_EXEC) && !(mode & S_IXUSR)) return -EACCES;
+        return 0;
+    }
+
+    // Group
+    if (gid_eq(gid, inode->i_gid)) {
+        if ((mask & MAY_READ) && !(mode & S_IRGRP)) return -EACCES;
+        if ((mask & MAY_WRITE) && !(mode & S_IWGRP)) return -EACCES;
+        if ((mask & MAY_EXEC) && !(mode & S_IXGRP)) return -EACCES;
+        return 0;
+    }
+
+    // Others
+    if ((mask & MAY_READ) && !(mode & S_IROTH)) return -EACCES;
+    if ((mask & MAY_WRITE) && !(mode & S_IWOTH)) return -EACCES;
+    if ((mask & MAY_EXEC) && !(mode & S_IXOTH)) return -EACCES;
+
     return 0;
 }
+
+
+// Ensure default content is added when the file is created
+static int file_create_default_content(void) {
+    if (file_size == 0) {
+        // Add the default content if the file is empty
+        strncpy(file_data, FILE_CONTENT, MAX_FILE_SIZE);
+        file_size = strlen(FILE_CONTENT);
+        printk(KERN_INFO "file_system: Default content added to file\n");
+    }
+    return 0;
+}
+
+static int file_open(struct inode *inode, struct file *filp)
+{
+    int flags = filp->f_flags;
+    int mask = 0;
+
+    if (flags & O_RDONLY) mask |= MAY_READ;
+    if (flags & O_WRONLY) mask |= MAY_WRITE;
+    if (flags & O_RDWR)   mask |= (MAY_READ | MAY_WRITE);
+
+    if (check_permissions(inode, mask) != 0) {
+        printk(KERN_WARNING "file_system: Access denied for open\n");
+        return -EACCES;
+    }
+
+    file_create_default_content();  // Ensure default content is added to the file when opened
+    printk(KERN_INFO "file_system: file_open allowed\n");
+    return 0;
+}
+
 
 // Read system call
 static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset)
 {
-    const char *data = FILE_CONTENT;
-    size_t datalen = strlen(data);
+    if (check_permissions(filp->f_inode, MAY_READ) != 0)
+        return -EACCES;
 
-    printk(KERN_INFO "file_system: file_read called\n");
-
-    if (*offset >= datalen)
+    if (*offset >= file_size)
         return 0;
 
-    if (len > datalen - *offset)
-        len = datalen - *offset;
+    if (len > file_size - *offset)
+        len = file_size - *offset;
 
-    if (copy_to_user(buf, data + *offset, len) != 0)
+    if (copy_to_user(buf, file_data + *offset, len) != 0)
         return -EFAULT;
 
     *offset += len;
     return len;
 }
 
+
 // Write system call
 static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset)
 {
-    printk(KERN_INFO "file_system: file_write called (but write ignored)\n");
-    return len;  // Accepts data but does not store it
+    if (check_permissions(filp->f_inode, MAY_WRITE) != 0)
+        return -EACCES;
+
+    if (*offset + len > MAX_FILE_SIZE)
+        len = MAX_FILE_SIZE - *offset;
+
+    if (copy_from_user(file_data + *offset, buf, len) != 0)
+        return -EFAULT;
+
+    *offset += len;
+    if (*offset > file_size)
+        file_size = *offset;
+
+    printk(KERN_INFO "file_system: file_write called, wrote %zu bytes\n", len);
+    return len;
 }
 
 // ===============================
