@@ -13,6 +13,11 @@
 #include <linux/string.h>       // String helper functions
 #include <linux/slab.h>         // Kernel memory allocation
 #include <linux/uaccess.h>      // For copy_to_user
+#include <linux/version.h>
+#include <linux/dcache.h> // For d_add
+#include <linux/types.h>    // For basic data types like uid_t, gid_t, etc.
+#include <linux/mount.h>    // For mounting related functions (if needed)
+
 
 // ===============================
 //        Macro Definitions
@@ -31,6 +36,8 @@ static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t
 static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
 static struct inode *file_system_make_inode(struct super_block *sb, int mode);
 static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data);
+static int file_symlink(struct mnt_idmap *idmap, struct inode *dir,struct dentry *dentry, const char *symname);
+static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
 
 // ===============================
 //        File Operations
@@ -67,12 +74,60 @@ static int file_mkdir(struct mnt_idmap *idmap, struct inode *dir, struct dentry 
     return 0;
 }
 
+
+
 static const struct inode_operations file_system_dir_inode_ops = {
-    .lookup = simple_lookup,
+    .lookup = file_lookup,
     .link   = simple_link,
     .mkdir  = file_mkdir,
     .rmdir  = simple_rmdir,
+    .symlink = file_symlink,
 };
+
+// ===============================
+//      Softlink
+// ===============================
+static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+{
+    d_add(dentry, NULL);  // Mark it as a negative dentry
+    return NULL;
+}
+
+
+static int file_symlink(struct mnt_idmap *idmap, struct inode *dir,
+                        struct dentry *dentry, const char *symname)
+{
+    struct inode *inode;
+
+    inode = new_inode(dir->i_sb);
+    if (!inode)
+        return -ENOMEM;
+
+    inode->i_mode = S_IFLNK | 0777;
+    inode->i_uid = current_fsuid();
+    inode->i_gid = current_fsgid();
+    inode->i_op = &simple_symlink_inode_operations;
+
+    inode->i_link = kstrdup(symname, GFP_KERNEL);  // Allocate link string
+    if (!inode->i_link) {
+        iput(inode);
+        return -ENOMEM;
+    }
+
+    inode->i_size = strlen(symname);  // This is crucial for softlink to work
+
+    //d_add(dentry, inode);  // Add dentry to inode
+    d_instantiate(dentry, inode);
+
+
+    inode_inc_link_count(inode); // Add this to prevent premature inode deletion
+
+    printk(KERN_INFO "file_system: Created symbolic link '%s' -> '%s'\n",
+           dentry->d_name.name, symname);
+
+    return 0;
+}
+
 
 // ===============================
 //      Superblock Operations
@@ -104,11 +159,15 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode)
     } else if (S_ISREG(mode)) {
         inode->i_fop = &file_ops;
         inode_inc_link_count(inode);
+    } else if (S_ISLNK(mode)) {
+        inode->i_op = &simple_symlink_inode_operations;
+        // i_link will be set in your symlink function
     }
 
     printk(KERN_INFO "file_system: inode created with mode %o\n", mode);
     return inode;
 }
+
 
 // Open system call
 static int file_open(struct inode *inode, struct file *filp)
@@ -196,9 +255,17 @@ static struct dentry *file_system_mount(struct file_system_type *fs_type, int fl
 // Unmount handler
 static void file_system_kill_sb(struct super_block *sb)
 {
+    struct dentry *root = sb->s_root;
     printk(KERN_INFO "file_system: unmounting...\n");
-    kill_litter_super(sb);
+
+    if (root) {
+        shrink_dcache_sb(sb);
+        d_drop(root);
+    }
+
+    kill_litter_super(sb);  // Original cleanup
 }
+
 
 // ===============================
 //     File System Definition
