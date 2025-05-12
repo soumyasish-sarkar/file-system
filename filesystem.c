@@ -258,7 +258,6 @@ static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t
     return len;
 }
 
-
 // Write system call
 static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset)
 {
