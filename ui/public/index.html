@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Custom File System</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      background-color: #f4f6f9;
+      color: #333;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2rem;
+      margin: 2px 0 0px;
+      color: #1a202c;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: row;
+      max-width: 1200px;
+      margin: 0 auto 60px;
+      padding: 20px;
+      gap: 32px;
+    }
+
+    .panel {
+      background: #ffffff;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.07);
+    }
+
+    .left-panel {
+      flex: 1.2;
+    }
+
+    .right-panel {
+      flex: 1;
+      min-width: 300px;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-size: 1.25rem;
+      color: #2d3748;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 6px;
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    input[type="text"],
+    textarea {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #cbd5e0;
+      border-radius: 8px;
+      font-size: 14px;
+      background-color: #fefefe;
+      transition: border 0.2s ease;
+    }
+
+    input[type="text"]:focus,
+    textarea:focus {
+      border-color: #4299e1;
+      outline: none;
+    }
+
+    textarea {
+      width: 100%;
+      resize: vertical;
+    }
+
+    button {
+      padding: 10px 18px;
+      background-color: #3182ce;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #2b6cb0;
+    }
+
+    pre {
+      background: #edf2f7;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      overflow-x: auto;
+      font-size: 13.5px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      max-height: 500px;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 30px 0;
+    }
+
+    @media screen and (max-width: 768px) {
+      .container {
+        flex-direction: column;
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Custom File System Interface</h1>
+
+  <div class="container">
+    <!-- Left Panel -->
+    <div class="panel left-panel">
+      <section>
+        <h2>Create Files and Directories</h2>
+        <div class="form-group">
+          <input type="text" id="file-name" placeholder="Enter file name" />
+          <button onclick="createFile()">Create File</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="dir-name" placeholder="Enter directory name" />
+          <button onclick="createDir()">Create Directory</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Create Links</h2>
+        <div class="form-group">
+          <input type="text" id="hardlink-target" placeholder="Target file for hard link" />
+          <input type="text" id="hardlink-name" placeholder="Hard link name" />
+          <button onclick="createHardLink()">Create Hard Link</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="symlink-target" placeholder="Target file for symlink" />
+          <input type="text" id="symlink-name" placeholder="Symbolic link name" />
+          <button onclick="createSymlink()">Create Symlink</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Write to File</h2>
+        <div class="form-group">
+          <input type="text" id="write-file-name" placeholder="File name to write to" />
+          <input type="text" id="file-content" placeholder="Content to write" />
+          <button onclick="writeFile()">Write</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Read a File</h2>
+        <div class="form-group">
+          <input type="text" id="read-file-name" placeholder="File name to read" />
+          <button onclick="readFile()">Read</button>
+        </div>
+        
+      </section>
+      <section>
+  <h2>Delete Files and Directories</h2>
+  <div class="form-group">
+    <input type="text" id="delete-file-name" placeholder="File name to delete" />
+    <button onclick="deleteFile()">Delete File</button>
+  </div>
+  <div class="form-group">
+    <input type="text" id="delete-dir-name" placeholder="Directory name to delete" />
+    <button onclick="deleteDirectory()">Delete Directory</button>
+  </div>
+</section>
+
+    </div>
+
+    <!-- Right Panel -->
+    <div class="panel right-panel">
+      <h2>Directory Contents</h2>
+      <div class="form-group">
+      <button onclick="refreshDir()">Refresh Directory</button>
+      </div>
+      <pre id="dir-content">(Directory structure will appear here)</pre>
+
+      <hr />
+
+      <h2>Status Messages</h2>
+      <div id="status-box" class="status-box">
+        <pre id="status-message">No Messages Yet</pre>
+      </div>
+
+      <hr />
+      <h2>File Content</h2>
+        <pre id="read-output">No content read yet.</pre>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
