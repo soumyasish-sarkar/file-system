@@ -42,7 +42,9 @@ static struct inode *file_system_make_inode(struct super_block *sb, int mode);
 static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data);
 static int file_symlink(struct mnt_idmap *idmap, struct inode *dir,struct dentry *dentry, const char *symname);
 static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
-
+static int file_create(struct mnt_idmap *idmap, struct inode *dir,
+                       struct dentry *dentry, umode_t mode, bool excl);
+static int file_unlink(struct inode *dir, struct dentry *dentry);
 // ===============================
 //        File Operations
 // ===============================
@@ -86,6 +88,8 @@ static const struct inode_operations file_system_dir_inode_ops = {
     .mkdir  = file_mkdir,
     .rmdir  = simple_rmdir,
     .symlink = file_symlink,
+    .create  = file_create,
+    .unlink  = file_unlink,
 };
 
 // ===============================
@@ -276,6 +280,41 @@ static ssize_t file_write(struct file *filp, const char __user *buf, size_t len,
 
     printk(KERN_INFO "file_system: file_write called, wrote %zu bytes\n", len);
     return len;
+}
+
+//file create
+static int file_create(struct mnt_idmap *idmap, struct inode *dir,
+                       struct dentry *dentry, umode_t mode, bool excl)
+{
+    struct inode *inode;
+
+    inode = file_system_make_inode(dir->i_sb, S_IFREG | mode);
+    if (!inode)
+        return -ENOMEM;
+
+    d_add(dentry, inode); // Add the dentry to the new inode
+    inode_inc_link_count(inode);    // Increase link count
+
+    // Initialize file with blank content (empty string)
+    memset(file_data, 0, MAX_FILE_SIZE);
+    file_size = 0;
+
+    printk(KERN_INFO "file_system: Created file '%s'\n", dentry->d_name.name);
+    return 0;
+}
+//file delete
+static int file_unlink(struct inode *dir, struct dentry *dentry)
+{
+    struct inode *inode = d_inode(dentry);
+
+    if (!inode)
+        return -ENOENT;
+
+    clear_nlink(inode);  // Set i_nlink to 0
+    d_drop(dentry);      // Remove from dcache
+
+    printk(KERN_INFO "file_system: File '%s' deleted\n", dentry->d_name.name);
+    return 0;
 }
 
 // ===============================
