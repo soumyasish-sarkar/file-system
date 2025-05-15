@@ -30,6 +30,21 @@
 #define MAX_FILE_SIZE 8192 //for file_write()
 static char file_data[MAX_FILE_SIZE];
 static size_t file_size = 0;
+#define JOURNAL_BLOCK_SIZE 512  // Size of each journal entry block
+#define MAX_JOURNAL_ENTRIES 100
+// Structure for journal entries
+struct journal_entry {
+    unsigned long transaction_id;
+    unsigned long inode_number;
+    char operation; // 'C' for create, 'D' for delete, etc.
+    char data[JOURNAL_BLOCK_SIZE];
+};
+// static void print_journal(void);
+// Global variables
+static unsigned long journal_transaction_id = 0;  // Transaction ID counter
+static struct journal_entry *journal_block = NULL;  // Journal block to store operations
+static struct journal_entry journal_entries[MAX_JOURNAL_ENTRIES];
+static int journal_index = 0;
 
 
 // ===============================
@@ -45,6 +60,19 @@ static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsi
 static int file_create(struct mnt_idmap *idmap, struct inode *dir,
                        struct dentry *dentry, umode_t mode, bool excl);
 static int file_unlink(struct inode *dir, struct dentry *dentry);
+static void journal_start(struct inode *inode, char operation);
+static void log_journal_entry(struct inode *inode, char operation, const char *data);
+// Function declarations
+// static void log_file_create(struct inode *inode, const char *filename);
+// static void log_file_delete(struct inode *inode, const char *filename);
+// static struct inode *root_inode;  // Declare globally
+
+// static void initialize_root_inode(struct super_block *sb) {
+//     root_inode = sb->s_root->d_inode;  // Now the assignment happens in a function
+// }
+
+
+
 // ===============================
 //        File Operations
 // ===============================
@@ -283,39 +311,47 @@ static ssize_t file_write(struct file *filp, const char __user *buf, size_t len,
 }
 
 //file create
+// Modified file_create to include journaling
 static int file_create(struct mnt_idmap *idmap, struct inode *dir,
                        struct dentry *dentry, umode_t mode, bool excl)
 {
-    struct inode *inode;
+    int ret;
+    struct inode *inode = file_system_make_inode(dir->i_sb, mode);
 
-    inode = file_system_make_inode(dir->i_sb, S_IFREG | mode);
-    if (!inode)
-        return -ENOMEM;
+    if (IS_ERR(inode)) {
+        ret = PTR_ERR(inode);
+        return ret;
+    }
 
-    d_add(dentry, inode); // Add the dentry to the new inode
-    inode_inc_link_count(inode);    // Increase link count
+    // Start journaling for file creation
+    journal_start(inode, 'C');  // 'C' for create
 
-    // Initialize file with blank content (empty string)
-    memset(file_data, 0, MAX_FILE_SIZE);
-    file_size = 0;
+    d_add(dentry, inode);
+    log_journal_entry(inode, 'C', dentry->d_name.name);
+    
+    inode_inc_link_count(dir);
 
     printk(KERN_INFO "file_system: Created file '%s'\n", dentry->d_name.name);
     return 0;
 }
-//file delete
+
 static int file_unlink(struct inode *dir, struct dentry *dentry)
 {
-    struct inode *inode = d_inode(dentry);
+    struct inode *inode = dentry->d_inode;
+    int ret = 0;
 
-    if (!inode)
-        return -ENOENT;
+    // Start journaling for file deletion
+    journal_start(inode, 'D');  // 'D' for delete
 
-    clear_nlink(inode);  // Set i_nlink to 0
-    d_drop(dentry);      // Remove from dcache
+    ret = simple_unlink(dir, dentry);
+    log_journal_entry(dentry->d_inode, 'D', dentry->d_name.name);
+    if (ret)
+        return ret;
 
-    printk(KERN_INFO "file_system: File '%s' deleted\n", dentry->d_name.name);
+    printk(KERN_INFO "file_system: Unlinked file '%s'\n", dentry->d_name.name);
     return 0;
 }
+
 
 // ===============================
 //        Mount Operations
@@ -414,6 +450,45 @@ static void __exit file_system_exit(void)
     if (ret != 0)
         printk(KERN_ERR "file_system: Unregistration failed\n");
 }
+//journaling 
+static void journal_start(struct inode *inode, char operation) {
+    journal_block = kmalloc(sizeof(struct journal_entry), GFP_KERNEL);
+    if (!journal_block) {
+        printk(KERN_ERR "file_system: Failed to allocate memory for journal block\n");
+        return;
+    }
+
+    journal_block->transaction_id = ++journal_transaction_id;
+    journal_block->inode_number = inode->i_ino;
+    journal_block->operation = operation;
+    strncpy(journal_block->data, "Data associated with the operation", JOURNAL_BLOCK_SIZE);
+    printk(KERN_INFO "file_system: Journal started for inode %lu, operation %c\n", inode->i_ino, operation);
+}
+
+static void log_journal_entry(struct inode *inode, char operation, const char *data)
+{
+    if (journal_index >= MAX_JOURNAL_ENTRIES) {
+        printk(KERN_WARNING "file_system: Journal full, overwriting oldest entry\n");
+        journal_index = 0; // Circular log
+    }
+
+    struct journal_entry *entry = &journal_entries[journal_index++];
+    entry->transaction_id = ++journal_transaction_id;
+    entry->inode_number = inode->i_ino;
+    entry->operation = operation;
+
+    if (data)
+        strncpy(entry->data, data, JOURNAL_BLOCK_SIZE);
+    else
+        memset(entry->data, 0, JOURNAL_BLOCK_SIZE);
+
+    printk(KERN_INFO "file_system: Journaled operation '%c' for inode %lu (Txn %lu)\n",
+           operation, inode->i_ino, entry->transaction_id);
+}
+
+
+
+
 
 module_init(file_system_init);
 module_exit(file_system_exit);

@@ -3,6 +3,8 @@ const http = require("http");
 const socketIo = require("socket.io");
 const { spawn } = require("child_process");
 const path = require("path");
+const { exec } = require("child_process");
+
 
 const app = express();
 const server = http.createServer(app);
@@ -89,6 +91,37 @@ io.on("connection", (socket) => {
     });
   });
   
+  socket.on("get-kernel-logs", () => {
+    exec("sudo dmesg | grep file_system", (err, stdout, stderr) => {
+      if (err) {
+        socket.emit("kernel-logs", "Error fetching logs.");
+      } else {
+        socket.emit("kernel-logs", stdout || "No relevant logs found.");
+      }
+    });
+  });
+
+  socket.on("check-permissions", (name) => {
+  executeCommand(`ls -ld /mount/fs/${name}`, (response) => {
+    if (response.startsWith("Error")) {
+      socket.emit("permission-result", `${response}`);
+    } else {
+      socket.emit("permission-result", `${response}`);
+    }
+  });
+});
+
+
+// On the server:
+socket.on("login", ({ user, pass }, callback) => {
+  if (user === "soumyasish_sarkar" && pass === "1234") {
+    callback({ success: true });
+  } else {
+    callback({ success: false });
+  }
+});
+
+
 
 
 // Write file (only if it exists and is not a directory)

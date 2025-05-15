@@ -8,11 +8,15 @@ function updateStatus(message, isError = false) {
 
 function createFile() {
   const fileName = document.getElementById("file-name").value;
+    if (!fileName) return updateStatus("File name cannot be empty", true);
+
   socket.emit("create-file", fileName);
 }
 
+
 function createDir() {
   const dirName = document.getElementById("dir-name").value;
+    if (!dirName) return updateStatus("Directory name cannot be empty", true);
   socket.emit("create-dir", dirName);
 }
 
@@ -100,3 +104,32 @@ socket.on("success", (message) => {
 socket.on("error", (message) => {
   updateStatus(message, true);
 });
+
+// Fetch logs from dmesg | grep "file_system"
+function fetchLogs() {
+  socket.emit("get-kernel-logs");
+}
+
+
+socket.on("kernel-logs", (logData) => {
+  document.getElementById("status-message").textContent = logData;
+});
+
+// Call this every 5 seconds
+setInterval(fetchLogs, 5000);
+
+function checkPermissions() {
+  const name = document.getElementById("perm-file-name").value.trim();
+  if (!name) return updateStatus("Enter file/dir name", true);
+  socket.emit("check-permissions", name);
+}
+
+socket.on("permission-result", (msg) => {
+  updateStatus(msg);
+});
+
+
+
+
+
+

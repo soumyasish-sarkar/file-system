@@ -117,6 +117,15 @@
       margin: 30px 0;
     }
 
+    .status-box pre {
+      min-height: 50px;
+      background: #e2f1ff; /* Bluish background */
+      border: 1px solid #cbd5e0;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'Courier New', monospace;
+    }
+
     @media screen and (max-width: 768px) {
       .container {
         flex-direction: column;
@@ -127,7 +136,7 @@
 </head>
 <body>
 
-  <h1>Custom File System Interface</h1>
+  <h1>Kernel-Level File System in User Space</h1>
 
   <div class="container">
     <!-- Left Panel -->
@@ -173,27 +182,34 @@
           <input type="text" id="read-file-name" placeholder="File name to read" />
           <button onclick="readFile()">Read</button>
         </div>
-        
       </section>
-      <section>
-  <h2>Delete Files and Directories</h2>
-  <div class="form-group">
-    <input type="text" id="delete-file-name" placeholder="File name to delete" />
-    <button onclick="deleteFile()">Delete File</button>
-  </div>
-  <div class="form-group">
-    <input type="text" id="delete-dir-name" placeholder="Directory name to delete" />
-    <button onclick="deleteDirectory()">Delete Directory</button>
-  </div>
-</section>
 
+      <section>
+        <h2>Delete Files and Directories</h2>
+        <div class="form-group">
+          <input type="text" id="delete-file-name" placeholder="File name to delete" />
+          <button onclick="deleteFile()">Delete File</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="delete-dir-name" placeholder="Directory name to delete" />
+          <button onclick="deleteDirectory()">Delete Directory</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>File Permissions</h2>
+        <div class="form-group">
+          <input type="text" id="perm-file-name" placeholder="Enter file or dir name" />
+          <button onclick="checkPermissions()">Check Permissions</button>
+        </div>
+      </section>
     </div>
 
     <!-- Right Panel -->
     <div class="panel right-panel">
       <h2>Directory Contents</h2>
       <div class="form-group">
-      <button onclick="refreshDir()">Refresh Directory</button>
+        <button onclick="refreshDir()">Refresh Directory</button>
       </div>
       <pre id="dir-content">(Directory structure will appear here)</pre>
 
@@ -206,9 +222,7 @@
 
       <hr />
       <h2>File Content</h2>
-        <pre id="read-output">No content read yet.</pre>
-      </div>
-
+      <pre id="read-output">No content read yet.</pre>
     </div>
   </div>
 

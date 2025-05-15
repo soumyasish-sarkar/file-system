@@ -1,0 +1,1170 @@
+filesystem.c
+// SPDX-License-Identifier: GPL
+// Author: Soumyasish Sarkar
+// Description: A simple in-kernel custom file system with hard link and file creation support
+
+// ===============================
+//           Headers
+// ===============================
+#include <linux/module.h>       // Core header for loading LKMs into the kernel
+#include <linux/fs.h>           // File system structures
+#include <linux/init.h>         // Macros used to mark up functions e.g., __init __exit
+#include <linux/kernel.h>       // Contains types, macros, functions for the kernel
+#include <linux/pagemap.h>      // For simple_dir_inode_operations, etc.
+#include <linux/string.h>       // String helper functions
+#include <linux/slab.h>         // Kernel memory allocation
+#include <linux/uaccess.h>      // For copy_to_user
+#include <linux/version.h>
+#include <linux/dcache.h> // For d_add
+#include <linux/types.h>    // For basic data types like uid_t, gid_t, etc.
+#include <linux/mount.h>    // For mounting related functions (if needed)
+
+
+// ===============================
+//        Macro Definitions
+// ===============================
+#define FILESYSTEM_NAME "file_system"
+#define FILESYSTEM_MAGIC 0x1CEB00DA
+#define FILESYSTEM_DEFAULT_MODE 0755
+#define FILE_CONTENT "Content of myfile\n"
+#define FILE_NAME "myfile"
+#define MAX_FILE_SIZE 8192 //for file_write()
+static char file_data[MAX_FILE_SIZE];
+static size_t file_size = 0;
+#define JOURNAL_BLOCK_SIZE 512  // Size of each journal entry block
+#define MAX_JOURNAL_ENTRIES 100
+// Structure for journal entries
+struct journal_entry {
+    unsigned long transaction_id;
+    unsigned long inode_number;
+    char operation; // 'C' for create, 'D' for delete, etc.
+    char data[JOURNAL_BLOCK_SIZE];
+};
+// static void print_journal(void);
+// Global variables
+static unsigned long journal_transaction_id = 0;  // Transaction ID counter
+static struct journal_entry *journal_block = NULL;  // Journal block to store operations
+static struct journal_entry journal_entries[MAX_JOURNAL_ENTRIES];
+static int journal_index = 0;
+
+
+// ===============================
+//     Function Declarations
+// ===============================
+static int file_open(struct inode *inode, struct file *filp);
+static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset);
+static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset);
+static struct inode *file_system_make_inode(struct super_block *sb, int mode);
+static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data);
+static int file_symlink(struct mnt_idmap *idmap, struct inode *dir,struct dentry *dentry, const char *symname);
+static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags);
+static int file_create(struct mnt_idmap *idmap, struct inode *dir,
+                       struct dentry *dentry, umode_t mode, bool excl);
+static int file_unlink(struct inode *dir, struct dentry *dentry);
+static void journal_start(struct inode *inode, char operation);
+static void log_journal_entry(struct inode *inode, char operation, const char *data);
+// Function declarations
+// static void log_file_create(struct inode *inode, const char *filename);
+// static void log_file_delete(struct inode *inode, const char *filename);
+// static struct inode *root_inode;  // Declare globally
+
+// static void initialize_root_inode(struct super_block *sb) {
+//     root_inode = sb->s_root->d_inode;  // Now the assignment happens in a function
+// }
+
+
+
+// ===============================
+//        File Operations
+// ===============================
+static const struct file_operations file_ops = {
+    .owner = THIS_MODULE,
+    .open = file_open,
+    .read = file_read,
+    .write = file_write,
+};
+
+// ===============================
+//       Inode Operations
+// ===============================
+static const struct inode_operations file_system_inode_ops = {
+    .link = simple_link,
+};
+
+// ===============================
+// Directory Inode Operations
+// ===============================
+static int file_mkdir(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry, umode_t mode)
+{
+    struct inode *inode = file_system_make_inode(dir->i_sb, S_IFDIR | mode);
+    if (!inode)
+        return -ENOMEM;
+
+    d_add(dentry, inode);
+
+    inode_inc_link_count(dir);      // ".." in new dir points to parent
+    inode_inc_link_count(inode);    // "." in new dir points to itself
+
+    printk(KERN_INFO "file_system: Directory '%s' created\n", dentry->d_name.name);
+    return 0;
+}
+
+
+
+static const struct inode_operations file_system_dir_inode_ops = {
+    .lookup = file_lookup,
+    .link   = simple_link,
+    .mkdir  = file_mkdir,
+    .rmdir  = simple_rmdir,
+    .symlink = file_symlink,
+    .create  = file_create,
+    .unlink  = file_unlink,
+};
+
+// ===============================
+//      Softlink
+// ===============================
+static struct dentry *file_lookup(struct inode *dir, struct dentry *dentry, unsigned int flags)
+{
+    d_add(dentry, NULL);  // Mark it as a negative dentry
+    return NULL;
+}
+
+
+static int file_symlink(struct mnt_idmap *idmap, struct inode *dir,
+                        struct dentry *dentry, const char *symname)
+{
+    struct inode *inode;
+
+    inode = new_inode(dir->i_sb);
+    if (!inode)
+        return -ENOMEM;
+
+    inode->i_mode = S_IFLNK | 0777;
+    inode->i_uid = current_fsuid();
+    inode->i_gid = current_fsgid();
+    inode->i_op = &simple_symlink_inode_operations;
+
+    inode->i_link = kstrdup(symname, GFP_KERNEL);  // Allocate link string
+    if (!inode->i_link) {
+        iput(inode);
+        return -ENOMEM;
+    }
+
+    inode->i_size = strlen(symname);  // This is crucial for softlink to work
+
+    //d_add(dentry, inode);  // Add dentry to inode
+    d_instantiate(dentry, inode);
+
+
+    inode_inc_link_count(inode); // Add this to prevent premature inode deletion
+
+    printk(KERN_INFO "file_system: Created symbolic link '%s' -> '%s'\n",
+           dentry->d_name.name, symname);
+
+    return 0;
+}
+
+
+// ===============================
+//      Superblock Operations
+// ===============================
+static const struct super_operations file_system_super_ops = {
+    .statfs = simple_statfs,
+    .drop_inode = generic_delete_inode,
+};
+
+// ===============================
+//         Core Functions
+// ===============================
+
+// Create a new inode
+static struct inode *file_system_make_inode(struct super_block *sb, int mode)
+{
+    struct inode *inode = new_inode(sb);
+    if (!inode)
+        return NULL;
+
+    inode->i_ino = get_next_ino();
+    inode->i_sb = sb;
+    inode->i_mode = mode;
+
+    inode->i_uid = current_fsuid(); 
+    inode->i_gid = current_fsgid(); 
+
+
+    if (S_ISDIR(mode)) {
+        inode->i_op = &file_system_dir_inode_ops;
+        inode->i_fop = &simple_dir_operations;
+        inode_inc_link_count(inode);
+    } else if (S_ISREG(mode)) {
+        inode->i_fop = &file_ops;
+        inode_inc_link_count(inode);
+    } else if (S_ISLNK(mode)) {
+        inode->i_op = &simple_symlink_inode_operations;
+        // i_link will be set in your symlink function
+    }
+
+    printk(KERN_INFO "file_system: inode created with mode %o\n", mode);
+    return inode;
+}
+
+//permission check
+static int check_permissions(struct inode *inode, int mask) {
+    kuid_t uid = current_fsuid();
+    kgid_t gid = current_fsgid();
+
+    umode_t mode = inode->i_mode;
+
+    // Owner
+    if (uid_eq(uid, inode->i_uid)) {
+        if ((mask & MAY_READ) && !(mode & S_IRUSR)) return -EACCES;
+        if ((mask & MAY_WRITE) && !(mode & S_IWUSR)) return -EACCES;
+        if ((mask & MAY_EXEC) && !(mode & S_IXUSR)) return -EACCES;
+        return 0;
+    }
+
+    // Group
+    if (gid_eq(gid, inode->i_gid)) {
+        if ((mask & MAY_READ) && !(mode & S_IRGRP)) return -EACCES;
+        if ((mask & MAY_WRITE) && !(mode & S_IWGRP)) return -EACCES;
+        if ((mask & MAY_EXEC) && !(mode & S_IXGRP)) return -EACCES;
+        return 0;
+    }
+
+    // Others
+    if ((mask & MAY_READ) && !(mode & S_IROTH)) return -EACCES;
+    if ((mask & MAY_WRITE) && !(mode & S_IWOTH)) return -EACCES;
+    if ((mask & MAY_EXEC) && !(mode & S_IXOTH)) return -EACCES;
+
+    return 0;
+}
+
+
+// Ensure default content is added when the file is created
+static int file_create_default_content(void) {
+    if (file_size == 0) {
+        // Add the default content if the file is empty
+        strncpy(file_data, FILE_CONTENT, MAX_FILE_SIZE);
+        file_size = strlen(FILE_CONTENT);
+        printk(KERN_INFO "file_system: Default content added to file\n");
+    }
+    return 0;
+}
+
+static int file_open(struct inode *inode, struct file *filp)
+{
+    int flags = filp->f_flags;
+    int mask = 0;
+
+    if (flags & O_RDONLY) mask |= MAY_READ;
+    if (flags & O_WRONLY) mask |= MAY_WRITE;
+    if (flags & O_RDWR)   mask |= (MAY_READ | MAY_WRITE);
+
+    if (check_permissions(inode, mask) != 0) {
+        printk(KERN_WARNING "file_system: Access denied for open\n");
+        return -EACCES;
+    }
+
+    file_create_default_content();  // Ensure default content is added to the file when opened
+    printk(KERN_INFO "file_system: file_open allowed\n");
+    return 0;
+}
+
+
+// Read system call
+static ssize_t file_read(struct file *filp, char __user *buf, size_t len, loff_t *offset)
+{
+    if (check_permissions(filp->f_inode, MAY_READ) != 0)
+        return -EACCES;
+
+    if (*offset >= file_size)
+        return 0;
+
+    if (len > file_size - *offset)
+        len = file_size - *offset;
+
+    if (copy_to_user(buf, file_data + *offset, len) != 0)
+        return -EFAULT;
+
+    *offset += len;
+    return len;
+}
+
+// Write system call
+static ssize_t file_write(struct file *filp, const char __user *buf, size_t len, loff_t *offset)
+{
+    if (check_permissions(filp->f_inode, MAY_WRITE) != 0)
+        return -EACCES;
+
+    if (*offset + len > MAX_FILE_SIZE)
+        len = MAX_FILE_SIZE - *offset;
+
+    if (copy_from_user(file_data + *offset, buf, len) != 0)
+        return -EFAULT;
+
+    *offset += len;
+    if (*offset > file_size)
+        file_size = *offset;
+
+    printk(KERN_INFO "file_system: file_write called, wrote %zu bytes\n", len);
+    return len;
+}
+
+//file create
+// Modified file_create to include journaling
+static int file_create(struct mnt_idmap *idmap, struct inode *dir,
+                       struct dentry *dentry, umode_t mode, bool excl)
+{
+    int ret;
+    struct inode *inode = file_system_make_inode(dir->i_sb, mode);
+
+    if (IS_ERR(inode)) {
+        ret = PTR_ERR(inode);
+        return ret;
+    }
+
+    // Start journaling for file creation
+    journal_start(inode, 'C');  // 'C' for create
+
+    d_add(dentry, inode);
+    log_journal_entry(inode, 'C', dentry->d_name.name);
+    
+    inode_inc_link_count(dir);
+
+    printk(KERN_INFO "file_system: Created file '%s'\n", dentry->d_name.name);
+    return 0;
+}
+
+static int file_unlink(struct inode *dir, struct dentry *dentry)
+{
+    struct inode *inode = dentry->d_inode;
+    int ret = 0;
+
+    // Start journaling for file deletion
+    journal_start(inode, 'D');  // 'D' for delete
+
+    ret = simple_unlink(dir, dentry);
+    log_journal_entry(dentry->d_inode, 'D', dentry->d_name.name);
+    if (ret)
+        return ret;
+
+    printk(KERN_INFO "file_system: Unlinked file '%s'\n", dentry->d_name.name);
+    return 0;
+}
+
+
+// ===============================
+//        Mount Operations
+// ===============================
+static int file_system_fill_super(struct super_block *sb, void *data, int silent)
+{
+    struct inode *root_inode, *file_inode;
+    struct dentry *root_dentry, *file_dentry;
+
+    sb->s_magic = FILESYSTEM_MAGIC;
+    sb->s_op = &file_system_super_ops;
+
+    // Create root inode
+    root_inode = file_system_make_inode(sb, S_IFDIR | FILESYSTEM_DEFAULT_MODE);
+    if (!root_inode)
+        return -ENOMEM;
+
+    root_dentry = d_make_root(root_inode);
+    if (!root_dentry) {
+        iput(root_inode);
+        return -ENOMEM;
+    }
+
+    sb->s_root = root_dentry;
+
+    // Create default file
+    file_inode = file_system_make_inode(sb, S_IFREG | 0644);
+    if (!file_inode)
+        return -ENOMEM;
+
+    file_inode->i_fop = &file_ops;
+
+    file_dentry = d_alloc_name(root_dentry, FILE_NAME);
+    if (!file_dentry)
+        return -ENOMEM;
+
+    d_add(file_dentry, file_inode);
+
+    printk(KERN_INFO "file_system: superblock initialized with '%s'\n", FILE_NAME);
+    return 0;
+}
+
+// Mount handler
+static struct dentry *file_system_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
+{
+    printk(KERN_INFO "file_system: mounting...\n");
+    return mount_nodev(fs_type, flags, data, file_system_fill_super);
+}
+
+// Unmount handler
+static void file_system_kill_sb(struct super_block *sb)
+{
+    struct dentry *root = sb->s_root;
+    printk(KERN_INFO "file_system: unmounting...\n");
+
+    if (root) {
+        shrink_dcache_sb(sb);
+        d_drop(root);
+    }
+
+    kill_litter_super(sb);  // Original cleanup
+}
+
+
+// ===============================
+//     File System Definition
+// ===============================
+static struct file_system_type file_system_type = {
+    .owner = THIS_MODULE,
+    .name = FILESYSTEM_NAME,
+    .mount = file_system_mount,
+    .kill_sb = file_system_kill_sb,
+};
+
+// ===============================
+//    Module Init / Exit Hooks
+// ===============================
+static int __init file_system_init(void)
+{
+    int ret;
+
+    printk(KERN_INFO "file_system: Registering file system\n");
+    ret = register_filesystem(&file_system_type);
+    if (ret != 0)
+        printk(KERN_ERR "file_system: Registration failed\n");
+
+    return ret;
+}
+
+static void __exit file_system_exit(void)
+{
+    int ret;
+
+    printk(KERN_INFO "file_system: Unregistering file system\n");
+    ret = unregister_filesystem(&file_system_type);
+    if (ret != 0)
+        printk(KERN_ERR "file_system: Unregistration failed\n");
+}
+//journaling 
+static void journal_start(struct inode *inode, char operation) {
+    journal_block = kmalloc(sizeof(struct journal_entry), GFP_KERNEL);
+    if (!journal_block) {
+        printk(KERN_ERR "file_system: Failed to allocate memory for journal block\n");
+        return;
+    }
+
+    journal_block->transaction_id = ++journal_transaction_id;
+    journal_block->inode_number = inode->i_ino;
+    journal_block->operation = operation;
+    strncpy(journal_block->data, "Data associated with the operation", JOURNAL_BLOCK_SIZE);
+    printk(KERN_INFO "file_system: Journal started for inode %lu, operation %c\n", inode->i_ino, operation);
+}
+
+static void log_journal_entry(struct inode *inode, char operation, const char *data)
+{
+    if (journal_index >= MAX_JOURNAL_ENTRIES) {
+        printk(KERN_WARNING "file_system: Journal full, overwriting oldest entry\n");
+        journal_index = 0; // Circular log
+    }
+
+    struct journal_entry *entry = &journal_entries[journal_index++];
+    entry->transaction_id = ++journal_transaction_id;
+    entry->inode_number = inode->i_ino;
+    entry->operation = operation;
+
+    if (data)
+        strncpy(entry->data, data, JOURNAL_BLOCK_SIZE);
+    else
+        memset(entry->data, 0, JOURNAL_BLOCK_SIZE);
+
+    printk(KERN_INFO "file_system: Journaled operation '%c' for inode %lu (Txn %lu)\n",
+           operation, inode->i_ino, entry->transaction_id);
+}
+
+
+
+
+
+module_init(file_system_init);
+module_exit(file_system_exit);
+
+// ===============================
+//         Module Info
+// ===============================
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Soumyasish Sarkar");
+MODULE_DESCRIPTION("A Simple Kernel-Level File System");
+
+
+index.html 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Custom File System</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      background-color: #f4f6f9;
+      color: #333;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 2rem;
+      margin: 2px 0 0px;
+      color: #1a202c;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: row;
+      max-width: 1200px;
+      margin: 0 auto 60px;
+      padding: 20px;
+      gap: 32px;
+    }
+
+    .panel {
+      background: #ffffff;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.07);
+    }
+
+    .left-panel {
+      flex: 1.2;
+    }
+
+    .right-panel {
+      flex: 1;
+      min-width: 300px;
+    }
+
+    h2 {
+      margin-top: 0;
+      font-size: 1.25rem;
+      color: #2d3748;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 6px;
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    input[type="text"],
+    textarea {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #cbd5e0;
+      border-radius: 8px;
+      font-size: 14px;
+      background-color: #fefefe;
+      transition: border 0.2s ease;
+    }
+
+    input[type="text"]:focus,
+    textarea:focus {
+      border-color: #4299e1;
+      outline: none;
+    }
+
+    textarea {
+      width: 100%;
+      resize: vertical;
+    }
+
+    button {
+      padding: 10px 18px;
+      background-color: #3182ce;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background-color 0.3s ease;
+    }
+
+    button:hover {
+      background-color: #2b6cb0;
+    }
+
+    pre {
+      background: #edf2f7;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      overflow-x: auto;
+      font-size: 13.5px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      max-height: 500px;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #e2e8f0;
+      margin: 30px 0;
+    }
+
+    .status-box pre {
+      min-height: 50px;
+      background: #e2f1ff; /* Bluish background */
+      border: 1px solid #cbd5e0;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: 'Courier New', monospace;
+    }
+
+    @media screen and (max-width: 768px) {
+      .container {
+        flex-direction: column;
+        padding: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Kernel-Level File System in User Space</h1>
+
+  <div class="container">
+    <!-- Left Panel -->
+    <div class="panel left-panel">
+      <section>
+        <h2>Create Files and Directories</h2>
+        <div class="form-group">
+          <input type="text" id="file-name" placeholder="Enter file name" />
+          <button onclick="createFile()">Create File</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="dir-name" placeholder="Enter directory name" />
+          <button onclick="createDir()">Create Directory</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Create Links</h2>
+        <div class="form-group">
+          <input type="text" id="hardlink-target" placeholder="Target file for hard link" />
+          <input type="text" id="hardlink-name" placeholder="Hard link name" />
+          <button onclick="createHardLink()">Create Hard Link</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="symlink-target" placeholder="Target file for symlink" />
+          <input type="text" id="symlink-name" placeholder="Symbolic link name" />
+          <button onclick="createSymlink()">Create Symlink</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Write to File</h2>
+        <div class="form-group">
+          <input type="text" id="write-file-name" placeholder="File name to write to" />
+          <input type="text" id="file-content" placeholder="Content to write" />
+          <button onclick="writeFile()">Write</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Read a File</h2>
+        <div class="form-group">
+          <input type="text" id="read-file-name" placeholder="File name to read" />
+          <button onclick="readFile()">Read</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Delete Files and Directories</h2>
+        <div class="form-group">
+          <input type="text" id="delete-file-name" placeholder="File name to delete" />
+          <button onclick="deleteFile()">Delete File</button>
+        </div>
+        <div class="form-group">
+          <input type="text" id="delete-dir-name" placeholder="Directory name to delete" />
+          <button onclick="deleteDirectory()">Delete Directory</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>File Permissions</h2>
+        <div class="form-group">
+          <input type="text" id="perm-file-name" placeholder="Enter file or dir name" />
+          <button onclick="checkPermissions()">Check Permissions</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right Panel -->
+    <div class="panel right-panel">
+      <h2>Directory Contents</h2>
+      <div class="form-group">
+        <button onclick="refreshDir()">Refresh Directory</button>
+      </div>
+      <pre id="dir-content">(Directory structure will appear here)</pre>
+
+      <hr />
+
+      <h2>Status Messages</h2>
+      <div id="status-box" class="status-box">
+        <pre id="status-message">No Messages Yet</pre>
+      </div>
+
+      <hr />
+      <h2>File Content</h2>
+      <pre id="read-output">No content read yet.</pre>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
+
+style.css
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  background-color: #f4f4f4;
+}
+
+.container {
+  max-width: 900px;
+  margin: 20px auto;
+  background-color: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+  color: #333;
+}
+
+.controls {
+  margin-bottom: 20px;
+}
+
+.controls input {
+  padding: 10px;
+  margin: 10px 5px;
+  width: calc(33% - 10px);
+  box-sizing: border-box;
+}
+
+.controls button {
+  padding: 10px;
+  background-color: #007BFF;
+  color: white;
+  border: none;
+  cursor: pointer;
+  border-radius: 5px;
+  margin: 5px;
+}
+
+.controls button:hover {
+  background-color: #0056b3;
+}
+
+.directory pre {
+  background-color: #e9ecef;
+  padding: 20px;
+  border-radius: 5px;
+  overflow: auto;
+}
+
+
+.status-box pre {
+  min-height: 50px;
+  background: #fdfdfd;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: 'Courier New', monospace;
+}
+
+script.js
+const socket = io();
+
+function updateStatus(message, isError = false) {
+  const statusBox = document.getElementById("status-message");
+  statusBox.textContent = (isError ? "❌ " : "✅ ") + message;
+  statusBox.style.color = isError ? "red" : "green";
+}
+
+function createFile() {
+  const fileName = document.getElementById("file-name").value;
+    if (!fileName) return updateStatus("File name cannot be empty", true);
+
+  socket.emit("create-file", fileName);
+}
+
+
+function createDir() {
+  const dirName = document.getElementById("dir-name").value;
+    if (!dirName) return updateStatus("Directory name cannot be empty", true);
+  socket.emit("create-dir", dirName);
+}
+
+function createHardLink() {
+  const target = document.getElementById("hardlink-target").value;
+  const linkName = document.getElementById("hardlink-name").value;
+  socket.emit("create-hardlink", target, linkName);
+}
+
+function createSymlink() {
+  const target = document.getElementById("symlink-target").value;
+  const linkName = document.getElementById("symlink-name").value;
+  socket.emit("create-symlink", target, linkName);
+}
+
+function refreshDir() {
+  socket.emit("refresh-dir");
+}
+
+function readFile() {
+  const fileName = document.getElementById("read-file-name").value;
+  socket.emit("read-file", fileName);
+}
+
+
+function writeFile() {
+  const fileName = document.getElementById("write-file-name").value;
+  const content = document.getElementById("file-content").value;
+  socket.emit("write-file", { fileName, content });
+}
+
+function deleteFile() {
+  const fileName = document.getElementById("delete-file-name").value.trim();
+  if (!fileName) return alert("Please enter a file name to delete.");
+  socket.emit("deleteFile", { name: fileName });
+}
+
+function deleteDirectory() {
+  const dirName = document.getElementById("delete-dir-name").value.trim();
+  if (!dirName) return alert("Please enter a directory name to delete.");
+  socket.emit("deleteDirectory", { name: dirName });
+}
+
+// Directory Content
+socket.on("dir-updated", (dirContent) => {
+  document.getElementById("dir-content").textContent = dirContent;
+});
+
+// File Read
+socket.on("file-read", ({ fileName, content }) => {
+  document.getElementById("read-output").textContent = content || "(Empty file)";
+  updateStatus(`Read from ${fileName} successful.`);
+});
+
+// File Created
+socket.on("file-created", (fileName) => {
+  updateStatus(`${fileName} has been created.`);
+  refreshDir();
+});
+
+// Directory Created
+socket.on("dir-created", (dirName) => {
+  updateStatus(`${dirName} directory created.`);
+  refreshDir();
+});
+
+// Hard Link Created
+socket.on("hardlink-created", (linkName) => {
+  updateStatus(`Hard link ${linkName} created.`);
+  refreshDir();
+});
+
+// Symlink Created
+socket.on("symlink-created", (linkName) => {
+  updateStatus(`Symbolic link ${linkName} created.`);
+  refreshDir();
+});
+
+// General Success
+socket.on("success", (message) => {
+  updateStatus(message);
+});
+
+// General Error
+socket.on("error", (message) => {
+  updateStatus(message, true);
+});
+
+// Fetch logs from dmesg | grep "file_system"
+function fetchLogs() {
+  socket.emit("get-kernel-logs");
+}
+
+
+socket.on("kernel-logs", (logData) => {
+  document.getElementById("status-message").textContent = logData;
+});
+
+// Call this every 5 seconds
+setInterval(fetchLogs, 5000);
+
+function checkPermissions() {
+  const name = document.getElementById("perm-file-name").value.trim();
+  if (!name) return updateStatus("Enter file/dir name", true);
+  socket.emit("check-permissions", name);
+}
+
+socket.on("permission-result", (msg) => {
+  updateStatus(msg);
+});
+
+
+
+
+
+
+server.js
+const express = require("express");
+const http = require("http");
+const socketIo = require("socket.io");
+const { spawn } = require("child_process");
+const path = require("path");
+const { exec } = require("child_process");
+
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server);
+
+app.use(express.static(path.join(__dirname, "public")));
+
+// Update this to your actual sudo password
+const SUDO_PASSWORD = "saumya";
+
+// Universal executor
+const executeCommand = (command, callback) => {
+  const sudo = spawn("sudo", ["-S", "bash", "-c", command]);
+
+  let output = "";
+  let error = "";
+
+  sudo.stdout.on("data", (data) => {
+    output += data.toString();
+  });
+
+  sudo.stderr.on("data", (data) => {
+    error += data.toString();
+  });
+
+  sudo.on("close", (code) => {
+    if (code !== 0 || error.includes("Permission denied")) {
+      callback(`Error: ${error}`);
+    } else {
+      callback(output || "Success");
+    }
+  });
+
+  // Send password to sudo prompt
+  sudo.stdin.write(`${SUDO_PASSWORD}\n`);
+  sudo.stdin.end();
+};
+
+io.on("connection", (socket) => {
+  console.log("User connected");
+
+  // Create file (touch)
+  socket.on("create-file", (fileName) => {
+    executeCommand(`touch /mount/fs/${fileName}`, (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("success", `${fileName} created successfully.`);
+    });
+  });
+
+  // Create directory (mkdir)
+  socket.on("create-dir", (dirName) => {
+    executeCommand(`mkdir /mount/fs/${dirName}`, (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("success", `${dirName} directory created successfully.`);
+    });
+  });
+
+  // Create hard link
+  socket.on("create-hardlink", (target, link) => {
+    executeCommand(`ln /mount/fs/${target} /mount/fs/${link}`, (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("success", `Hard link ${link} created successfully.`);
+    });
+  });
+
+  // Create symbolic link
+  socket.on("create-symlink", (target, link) => {
+    executeCommand(`ln -s /mount/fs/${target} /mount/fs/${link}`, (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("success", `Symbolic link ${link} created successfully.`);
+    });
+  });
+
+  // Read file (cat)
+  socket.on("read-file", (fileName) => {
+    executeCommand(`cat /mount/fs/${fileName}`, (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("file-read", { fileName, content: response });
+    });
+  });
+  
+  socket.on("get-kernel-logs", () => {
+    exec("sudo dmesg | grep file_system", (err, stdout, stderr) => {
+      if (err) {
+        socket.emit("kernel-logs", "Error fetching logs.");
+      } else {
+        socket.emit("kernel-logs", stdout || "No relevant logs found.");
+      }
+    });
+  });
+
+  socket.on("check-permissions", (name) => {
+  executeCommand(`ls -ld /mount/fs/${name}`, (response) => {
+    if (response.startsWith("Error")) {
+      socket.emit("permission-result", `${response}`);
+    } else {
+      socket.emit("permission-result", `${response}`);
+    }
+  });
+});
+
+
+// On the server:
+socket.on("login", ({ user, pass }, callback) => {
+  if (user === "soumyasish_sarkar" && pass === "1234") {
+    callback({ success: true });
+  } else {
+    callback({ success: false });
+  }
+});
+
+
+
+
+// Write file (only if it exists and is not a directory)
+socket.on("write-file", ({ fileName, content }) => {
+  const safeContent = content.replace(/"/g, '\\"');
+  const filePath = `/mount/fs/${fileName}`;
+  const command = `
+    if [ -f "${filePath}" ]; then
+      echo "${safeContent}" > "${filePath}";
+    elif [ -d "${filePath}" ]; then
+      echo "Error: '${fileName}' is a directory." >&2;
+      exit 1;
+    else
+      echo "Error: File '${fileName}' does not exist." >&2;
+      exit 1;
+    fi
+  `;
+
+  executeCommand(command, (response) => {
+    response.startsWith("Error")
+      ? socket.emit("error", response.trim())
+      : socket.emit("success", `Written to ${fileName} successfully.`);
+  });
+});
+
+
+
+
+  // Refresh directory
+  socket.on("refresh-dir", () => {
+    executeCommand("ls -li /mount/fs", (response) => {
+      response.startsWith("Error")
+        ? socket.emit("error", response)
+        : socket.emit("dir-updated", response);
+    });
+  });
+
+  // Delete a file
+// Delete a file
+socket.on("deleteFile", ({ name }) => {
+  const filePath = `/mount/fs/${name}`;
+  const command = `
+    if [ ! -e "${filePath}" ]; then
+      echo "Error: '${name}' does not exist." >&2
+      exit 1
+    elif [ -d "${filePath}" ]; then
+      echo "Error: '${name}' is a directory, not a file." >&2
+      exit 1
+    else
+      rm "${filePath}" && echo "Deleted"
+    fi
+  `;
+
+  executeCommand(command, (response) => {
+    const trimmed = response.trim();
+    if (trimmed === "Deleted") {
+      socket.emit("success", `File '${name}' deleted successfully.`);
+    } else {
+      socket.emit("error", trimmed);
+    }
+
+    socket.emit("refresh-dir");
+  });
+});
+
+
+
+// Delete a directory (only if it's empty)
+socket.on("deleteDirectory", ({ name }) => {
+  const dirPath = `/mount/fs/${name}`;
+  const command = `
+    if [ ! -e "${dirPath}" ]; then
+      echo "Error: '${name}' does not exist." >&2
+      exit 1
+    elif [ ! -d "${dirPath}" ]; then
+      echo "Error: '${name}' is not a directory." >&2
+      exit 1
+    elif [ "$(ls -A "${dirPath}")" ]; then
+      echo "Error: Directory '${name}' is not empty." >&2
+      exit 1
+    else
+      rmdir "${dirPath}" && echo "Deleted"
+    fi
+  `;
+
+  executeCommand(command, (response) => {
+    const trimmed = response.trim();
+    if (trimmed === "Deleted") {
+      socket.emit("success", `Directory '${name}' deleted successfully.`);
+    } else {
+      socket.emit("error", trimmed);
+    }
+
+    socket.emit("refresh-dir");
+  });
+});
+
+
+
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected");
+  });
+});
+
+server.listen(3000, () => {
+  console.log("Server running on http://localhost:3000");
+});
