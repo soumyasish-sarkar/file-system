@@ -293,22 +293,52 @@ $ cat /mnt/fs/myfile
 
 ### Screenshots
 
-## Terminal Output Screenshots
+## 📂 Terminal Output Screenshots
 
-- **Kernel Commands**: `/content/17.1.png`  
-- **Kernel Debug Logs**: `/content/17.2.png`  
-- **File Present**: `/content/17.3.1.png`  
-…  
-- **Symbolic Link Creation**: `/content/17.3.3.png`  
-- **Verify All Links**: `/content/17.3.4.png`  
-- **Touch File**: `/content/17.3.5.png`
+### 📄 File Present
+![Listing the file present in the mounted directory](17.3.1.png)
+
+### 🔗 Hard Link Creation
+![Creating a hard link to the existing file](17.3.2.png)
+
+### 🔗 Symbolic Link Creation
+![Creating a symbolic (soft) link](17.3.3.png)
+
+### ✅ Verifying File, Hard Link, and Soft Link
+![Displaying content of original file, hard link, and symbolic link using cat](17.3.4.png)
+
+### 📝 File Creation Using `touch`
+![Creating a new file using touch](17.3.5.png)
 
 ---
 
-## UI Output Screenshots
+## 🖥️ UI Interface Output Screenshots
 
-- **Node.js Starting**: `/content/16.4.1.png`  
-- **Home Page**: `/content/16.4.2.png`  
-- **Directory Content Refresh**: `/content/16.4.3.png`  
-…  
-- **Hard Link Created**: `/content/16.4.8.png`
+### 🟢 Node.js Starting
+![Node.js starting](16.4.1.png)
+
+### 🏠 Home Page
+![Home page of the application](16.4.2.png)
+
+### 🔄 Directory Content Refresh
+![Directory content after refresh](16.4.3.png)
+
+### 🆕 Create File Status Message
+![Status message after file creation](16.4.4.png)
+
+### 🗂️ Directory Refresh After File Creation
+![Directory content after file creation and refresh](16.4.5.png)
+
+### 📁 Directory Creation Status Message
+![Status message after directory creation](16.4.6.png)
+
+### 🔁 Directory Content Refresh After Directory Creation
+![Directory content after directory creation and refresh](16.4.7.png)
+
+### 🔗 Hard Link Create Status Message
+![Status message after hard link creation](16.4.8.png)
+
+### 🔗 Soft Link Create Status Message
+![Status message after soft link creation](16.4.9.png)
+
+---
