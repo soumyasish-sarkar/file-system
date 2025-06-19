@@ -109,12 +109,11 @@ Traditional Linux file systems are complex or abstracted via FUSE, limiting educ
 
 ## Data Flow Diagrams (DFD)
 
-### Level 0 DFD
-*(Insert `l0.png` here with caption)*
+### Level 0 DFD  
+![Level 0 DFD](l0.png)
 
-### Level 1 DFD
-*(Insert `l1.png` here with caption)*
-
+### Level 1 DFD  
+![Level 1 DFD](l1.png)
 ---
 
 ## Objectives
@@ -180,7 +179,20 @@ Handles operations: `open/read/write`, `create/lookup/mkdir/unlink/symlink`, jou
 ---
 
 ## Detailed Flowcharts
-*(Include flowchart images 6.1 to 6.7 with captions)*
+### 6.1 File Operation Flow  
+![6.1](6.1.png)
+
+![6.2](6.2.png)
+
+![6.3](6.3.png)
+
+![6.4](6.4.png)
+
+![6.5](6.5.png)
+
+![6.6](6.6.png)
+
+![6.7](6.7.png)
 
 ---
 
@@ -280,3 +292,26 @@ $ sudo ln -s /mount/fs/myfile /mount/fs/sfile
 $ sudo ls -li /mount/fs
 $ touch /mnt/fs/myfile
 $ cat /mnt/fs/myfile
+```
+
+### Screenshots
+
+## Terminal Output Screenshots
+- **Kernel Commands**: `17.1.png`  
+- **Kernel Debug Logs**: `17.2.png`  
+- **File Present**: `17.3.1.png`  
+…  
+- **Symbolic Link Creation**: `17.3.3.png`  
+- **Verify All Links**: `17.3.4.png`  
+- **Touch File**: `17.3.5.png`
+---
+
+## UI Output Screenshots
+
+- **Node.js Starting**: `16.4.1.png`  
+- **Home Page**: `16.4.2.png`  
+- **Directory Content Refresh**: `16.4.3.png`  
+…  
+- **Hard Link Created**: `16.4.8.png`
+
+---
