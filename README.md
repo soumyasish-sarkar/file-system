@@ -1,6 +1,8 @@
 # Build Your Own User‑Level File System
 
-![Tezpur University Logo](/content/tulogo.png)
+<div align="center">
+  <img src="/content/tulogo.png" alt="Tezpur University Logo" width="200"/>
+</div>
 
 **Bachelor of Technology in Computer Science and Engineering**  
 **Soumyasish Sarkar (CSB22054)**  
@@ -177,33 +179,34 @@ Handles operations: `open/read/write`, `create/lookup/mkdir/unlink/symlink`, jou
 
 ## Detailed Flowcharts
 ### 6.1 File Operation Flow  
+### 6.1 File Operation Flow  
 
 <div align="center">
-  <img src="/content/6.1.png" alt="6.1" width="500"/>
+  <img src="/content/6.1.png" alt="6.1" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.2.png" alt="6.2" width="500"/>
+  <img src="/content/6.2.png" alt="6.2" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.3.png" alt="6.3" width="500"/>
+  <img src="/content/6.3.png" alt="6.3" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.4.png" alt="6.4" width="500"/>
+  <img src="/content/6.4.png" alt="6.4" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.5.png" alt="6.5" width="500"/>
+  <img src="/content/6.5.png" alt="6.5" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.6.png" alt="6.6" width="500"/>
+  <img src="/content/6.6.png" alt="6.6" width="400"/>
 </div>
 
 <div align="center">
-  <img src="/content/6.7.png" alt="6.7" width="500"/>
+  <img src="/content/6.7.png" alt="6.7" width="400"/>
 </div>
 
 ---
