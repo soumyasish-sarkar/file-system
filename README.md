@@ -1,10 +1,6 @@
-# File-System
-Build Your File System
-
-
 # Build Your Own User‑Level File System
 
-![Tezpur University Logo](tulogo.png)
+![Tezpur University Logo](/content/tulogo.png)
 
 **Bachelor of Technology in Computer Science and Engineering**  
 **Soumyasish Sarkar (CSB22054)**  
@@ -110,10 +106,11 @@ Traditional Linux file systems are complex or abstracted via FUSE, limiting educ
 ## Data Flow Diagrams (DFD)
 
 ### Level 0 DFD  
-![Level 0 DFD](l0.png)
+![Level 0 DFD](/content/l0.png)
 
 ### Level 1 DFD  
-![Level 1 DFD](l1.png)
+![Level 1 DFD](/content/l1.png)
+
 ---
 
 ## Objectives
@@ -180,19 +177,19 @@ Handles operations: `open/read/write`, `create/lookup/mkdir/unlink/symlink`, jou
 
 ## Detailed Flowcharts
 ### 6.1 File Operation Flow  
-![6.1](6.1.png)
+![6.1](/content/6.1.png)  
 
-![6.2](6.2.png)
+![6.2](/content/6.2.png)  
 
-![6.3](6.3.png)
+![6.3](/content/6.3.png)  
 
-![6.4](6.4.png)
+![6.4](/content/6.4.png)  
 
-![6.5](6.5.png)
+![6.5](/content/6.5.png)  
 
-![6.6](6.6.png)
+![6.6](/content/6.6.png)  
 
-![6.7](6.7.png)
+![6.7](/content/6.7.png)
 
 ---
 
@@ -297,21 +294,21 @@ $ cat /mnt/fs/myfile
 ### Screenshots
 
 ## Terminal Output Screenshots
-- **Kernel Commands**: `17.1.png`  
-- **Kernel Debug Logs**: `17.2.png`  
-- **File Present**: `17.3.1.png`  
+
+- **Kernel Commands**: `/content/17.1.png`  
+- **Kernel Debug Logs**: `/content/17.2.png`  
+- **File Present**: `/content/17.3.1.png`  
 …  
-- **Symbolic Link Creation**: `17.3.3.png`  
-- **Verify All Links**: `17.3.4.png`  
-- **Touch File**: `17.3.5.png`
+- **Symbolic Link Creation**: `/content/17.3.3.png`  
+- **Verify All Links**: `/content/17.3.4.png`  
+- **Touch File**: `/content/17.3.5.png`
+
 ---
 
 ## UI Output Screenshots
 
-- **Node.js Starting**: `16.4.1.png`  
-- **Home Page**: `16.4.2.png`  
-- **Directory Content Refresh**: `16.4.3.png`  
+- **Node.js Starting**: `/content/16.4.1.png`  
+- **Home Page**: `/content/16.4.2.png`  
+- **Directory Content Refresh**: `/content/16.4.3.png`  
 …  
-- **Hard Link Created**: `16.4.8.png`
-
----
+- **Hard Link Created**: `/content/16.4.8.png`
