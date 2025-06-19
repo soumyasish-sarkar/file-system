@@ -177,19 +177,34 @@ Handles operations: `open/read/write`, `create/lookup/mkdir/unlink/symlink`, jou
 
 ## Detailed Flowcharts
 ### 6.1 File Operation Flow  
-![6.1](/content/6.1.png)  
 
-![6.2](/content/6.2.png)  
+<div align="center">
+  <img src="/content/6.1.png" alt="6.1" width="500"/>
+</div>
 
-![6.3](/content/6.3.png)  
+<div align="center">
+  <img src="/content/6.2.png" alt="6.2" width="500"/>
+</div>
 
-![6.4](/content/6.4.png)  
+<div align="center">
+  <img src="/content/6.3.png" alt="6.3" width="500"/>
+</div>
 
-![6.5](/content/6.5.png)  
+<div align="center">
+  <img src="/content/6.4.png" alt="6.4" width="500"/>
+</div>
 
-![6.6](/content/6.6.png)  
+<div align="center">
+  <img src="/content/6.5.png" alt="6.5" width="500"/>
+</div>
 
-![6.7](/content/6.7.png)
+<div align="center">
+  <img src="/content/6.6.png" alt="6.6" width="500"/>
+</div>
+
+<div align="center">
+  <img src="/content/6.7.png" alt="6.7" width="500"/>
+</div>
 
 ---
 
